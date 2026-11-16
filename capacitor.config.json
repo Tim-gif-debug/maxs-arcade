@@ -1,0 +1,20 @@
+{
+  "appId": "com.comicbookhistorians.maxsarcade",
+  "appName": "Maxs Arcade",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": true,
+    "allowsLinkPreview": false,
+    "backgroundColor": "#12122a",
+    "preferredContentMode": "mobile"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 800,
+      "backgroundColor": "#12122a",
+      "showSpinner": false
+    }
+  }
+}
