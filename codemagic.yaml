@@ -59,6 +59,10 @@ workflows:
           set('UIDeviceFamily', '<array>\n\t\t<integer>1</integer>\n\t\t<integer>2</integer>\n\t</array>');
           const out = src.slice(0, start) + '\n' + entries.map(([k, v]) => '\t<key>' + k + '</key>\n\t' + v).join('\n') + '\n' + src.slice(end);
           fs.writeFileSync(plistPath, out);
+          // Game Center needs this entitlement. The signing step only switches it on if the
+          // App Store profile includes Game Center, so the build cannot fail because of it.
+          fs.writeFileSync(path.join(__dirname, '..', 'ios', 'App', 'App', 'App.entitlements'),
+            '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>com.apple.developer.game-center</key>\n\t<true/>\n</dict>\n</plist>\n');
           fs.copyFileSync(path.join(__dirname, 'PrivacyInfo.xcprivacy'), path.join(__dirname, '..', 'ios', 'App', 'App', 'PrivacyInfo.xcprivacy'));
           console.log('Info.plist patched: portrait only, full screen, status bar hidden, no non-exempt encryption, privacy manifest added.');
           console.log('If Xcode does not show PrivacyInfo.xcprivacy under App, drag ios/App/App/PrivacyInfo.xcprivacy into the App group once (tick "Copy items if needed" off).');
@@ -163,13 +167,18 @@ workflows:
           PP_UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp.plist)
           TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/pp.plist)
           echo "Using profile: $PP_NAME ($PP_UUID) team $TEAM_ID"
+          if /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.game-center" /tmp/pp.plist >/dev/null 2>&1; then
+            ENT="App/App.entitlements"; echo "Game Center: ON (the profile includes it)"
+          else
+            ENT=""; echo "Game Center: OFF. The profile does not include Game Center, so the app is built without it."
+          fi
           PBX=ios/App/App.xcodeproj/project.pbxproj
           cat > scripts/pinprofile.js <<'EOF_PIN'
           // Pins a provisioning profile onto every build configuration whose bundle id matches.
           const fs = require('fs');
-          const [pbx, bid, team, name, uuid] = process.argv.slice(2);
+          const [pbx, bid, team, name, uuid, ent] = process.argv.slice(2);
           let s = fs.readFileSync(pbx, 'utf8');
-          const drop = ['CODE_SIGN_STYLE', 'CODE_SIGN_IDENTITY', '"CODE_SIGN_IDENTITY[sdk=iphoneos*]"', 'DEVELOPMENT_TEAM', 'PROVISIONING_PROFILE_SPECIFIER', 'PROVISIONING_PROFILE'];
+          const drop = ['CODE_SIGN_ENTITLEMENTS', 'CODE_SIGN_STYLE', 'CODE_SIGN_IDENTITY', '"CODE_SIGN_IDENTITY[sdk=iphoneos*]"', 'DEVELOPMENT_TEAM', 'PROVISIONING_PROFILE_SPECIFIER', 'PROVISIONING_PROFILE'];
           let count = 0;
           s = s.replace(/buildSettings = \{([\s\S]*?)\n(\t*)\};/g, (m, body, ind) => {
             if (!body.includes('PRODUCT_BUNDLE_IDENTIFIER = ' + bid)) return m;
@@ -181,7 +190,7 @@ workflows:
               'DEVELOPMENT_TEAM = ' + team + ';',
               'PROVISIONING_PROFILE_SPECIFIER = "' + name + '";',
               'PROVISIONING_PROFILE = "' + uuid + '";',
-            ].map(l => ind + '\t' + l);
+            ].concat(ent ? ['CODE_SIGN_ENTITLEMENTS = ' + ent + ';'] : []).map(l => ind + '\t' + l);
             count++;
             return 'buildSettings = {' + lines.join('\n') + '\n' + add.join('\n') + '\n' + ind + '};';
           });
@@ -189,8 +198,8 @@ workflows:
           console.log('Pinned profile on ' + count + ' build configuration(s).');
           if (!count) process.exit(1);
           EOF_PIN
-          node scripts/pinprofile.js "$PBX" "$BUNDLE_ID" "$TEAM_ID" "$PP_NAME" "$PP_UUID"
-          grep -n "CODE_SIGN_STYLE\|DEVELOPMENT_TEAM\|PROVISIONING_PROFILE\|PRODUCT_BUNDLE_IDENTIFIER" "$PBX"
+          node scripts/pinprofile.js "$PBX" "$BUNDLE_ID" "$TEAM_ID" "$PP_NAME" "$PP_UUID" "$ENT"
+          grep -n "CODE_SIGN_ENTITLEMENTS\|CODE_SIGN_STYLE\|DEVELOPMENT_TEAM\|PROVISIONING_PROFILE\|PRODUCT_BUNDLE_IDENTIFIER" "$PBX"
           cat > "$HOME/export_options.plist" <<EOF_EO
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -209,7 +218,7 @@ workflows:
           cd ios/App
           agvtool new-version -all $BUILD_NUMBER
           # Version shown on the App Store. Bump this for each update.
-          agvtool new-marketing-version 1.0
+          agvtool new-marketing-version 1.1
       - name: Build
         script: xcode-project build-ipa --workspace ios/App/App.xcworkspace --scheme App --export-options-plist "$HOME/export_options.plist"
     cache:
